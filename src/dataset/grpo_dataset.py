@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from src.params import DataArguments
 from src.constants import SYSTEM_MESSAGE
 
-from .data_utils import llava_to_openai
+from .data_utils import llava_to_openai, encode_video
 
 class GRPODataset(Dataset):
     """Dataset for DPO training"""
@@ -33,6 +33,7 @@ class GRPODataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.padding = padding
+        self.max_num_frames = data_args.max_num_frames
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -41,39 +42,56 @@ class GRPODataset(Dataset):
         sources = self.list_data_dict[i]
 
         is_video = False
+        num_frames = None
+        images = []
 
         if "image" in sources:
-            videos = None
-
             image_files = sources["image"]
             image_folder = self.data_args.image_folder
 
             if isinstance(image_files, str):
                 image_files = [image_files]
 
-            images = []
-            
             for image_file in image_files:
                 if not os.path.exists(image_file):
                     if not image_file.startswith("http"):
                         image_file = os.path.join(image_folder, image_file)
                 images.append({"type": "image", "image": image_file})
 
+        elif "video" in sources:
+            is_video = True
+            video_file = sources["video"]
+            video_folder = self.data_args.image_folder
 
-        conversations = copy.deepcopy(llava_to_openai(sources['conversations'], is_video=is_video))
+            if not os.path.exists(video_file):
+                video_file = os.path.join(video_folder, video_file)
+
+            # Encode video to frames (returns list of PIL Images)
+            video_frames = encode_video(video_file, self.max_num_frames)
+            num_frames = len(video_frames)
+
+            # Convert frames to image format for processing
+            for frame in video_frames:
+                images.append({"type": "image", "image": frame})
+
+        conversations = copy.deepcopy(llava_to_openai(sources['conversations'], is_video=is_video, num_frames=num_frames))
 
         user_input = conversations[0]
         gpt_response = conversations[1]
 
         text_content = {"type": "text", "text": user_input['content']}
-        contents = images + [text_content]
+
+        if len(images) > 0:
+            contents = images + [text_content]
+        else:
+            contents = [text_content]
 
         user_prompt = [{"role": "user", "content": contents}]
 
         if len(SYSTEM_MESSAGE) > 0:
             system_message = {"role": "system", "content": SYSTEM_MESSAGE}
             user_prompt.insert(0, system_message)
-        
+
         data_dict = dict(
             prompt=user_prompt,
             assistant=gpt_response,
