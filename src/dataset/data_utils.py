@@ -97,7 +97,7 @@ def get_image_info(images, processor):
     ]
 
     vision_infos = processor.apply_chat_template(
-    messages, add_generation_prompt=True, tokenize=True,
+    messages, add_generation_prompt=True, tokenize=True, chat_template=processor.chat_template if hasattr(processor, 'chat_template') else None,
     return_dict=True, return_tensors="pt")
 
     pixel_values = vision_infos["pixel_values"]
